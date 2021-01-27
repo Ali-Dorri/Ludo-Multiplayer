@@ -66,3 +66,9 @@ Corridor/Library/metadata/
 #VS Code
 #===========
 .vscode/
+
+#===========
+#Explicit
+#===========
+/Assets/StreamingAssets/build_info
+/Assets/StreamingAssets/build_info.meta
