@@ -19,24 +19,31 @@ namespace ADOp.Ludo.Test.Network
         private void OnEnable()
         {
             m_TcpClient.OnConnected += OnConnect;
+            m_TcpClient.OnDisconnected += OnDisconnected;
             m_TcpClient.OnRecieved += OnReceive;
         }
 
         private void OnDisable()
         {
             m_TcpClient.OnConnected -= OnConnect;
+            m_TcpClient.OnDisconnected -= OnDisconnected;
             m_TcpClient.OnRecieved -= OnReceive;
         }
 
         public void ConnectToServer(string ipAddress)
         {
             IPAddress address = IPAddress.Parse(ipAddress);
-            m_TcpClient.Connect(address, Settings.ServerPort, true);
+            m_TcpClient.Connect(address, Settings.ServerPort);
         }
 
         private void OnConnect()
         {
             Debug.Log("Connected to server");
+        }
+
+        private void OnDisconnected()
+        {
+            Debug.Log("Disconnected tcp client coroutine.");
         }
 
         private void OnReceive(byte[] bytes)

@@ -10,6 +10,12 @@ namespace ADOp.Ludo.Network
 {
     public class TcpClientCoroutine
     {
+        private class PollBackgroundInput
+        {
+            public Socket m_Socket;
+            public string m_ContainerName;
+        }
+
         private MonoBehaviour m_CoroutineContainer;
         private Coroutine m_Connecting;
         private Coroutine m_Receiving;
@@ -25,32 +31,54 @@ namespace ADOp.Ludo.Network
         /// </summary>
         private int m_PollWait = 1000;
         /// <summary>
-        /// If poll wait is greater than this, it will poll a background thread.
+        /// If poll wait is greater than this, it will poll in a background thread.
         /// </summary>
         private int m_BackgroundPollTreshold = 200;
         private bool m_IsPolling = false;
+        private bool m_IsConnected = false;
         private bool m_IsReceiving = false;
 
         public event Action OnConnected;
+        public event Action OnDisconnected;
         public event Action<byte[]> OnRecieved;
 
         public MonoBehaviour CoroutineContainer => m_CoroutineContainer;
         public Socket Client => m_Socket;
         public bool IsConnecting => m_Connecting != null;
-        public bool IsConnected => (m_Socket != null) ? m_Socket.Connected : false;
-        public bool IsReceiving => m_IsReceiving;
+        public bool IsConnected => m_IsConnected;
 
+        /// <summary>
+        /// Create tcp client for connecting to remote server.
+        /// </summary>
+        /// <param name="container">Monobehaviour to use for creating coroutines for connecting and receiving purposes.</param>
+        /// <param name="receiveBufferSize">Size of buffer for receiving message.</param>
         public TcpClientCoroutine(MonoBehaviour container, int receiveBufferSize = 1042)
         {
+            CheckContainerInitialization(container);
             m_CoroutineContainer = container;
             m_ReceiveBuffer = new byte[receiveBufferSize];
         }
 
+        /// <summary>
+        /// Create tcp client for specified socket and start receiving messages. Create TcpClientCoroutines with this constructor for Sockets
+        /// returned by TcpListenerCoroutine.
+        /// </summary>
+        /// <param name="container">Monobehaviour to use for creating coroutines for connecting and receiving purposes.</param>
+        /// <param name="socket">Socket to use for tcp client.</param>
+        /// <param name="receiveBufferSize">Size of buffer for receiving message.</param>
         public TcpClientCoroutine(MonoBehaviour container, Socket socket, int receiveBufferSize = 1024)
         {
+            CheckContainerInitialization(container);
+            if(socket == null)
+            {
+                string error = string.Format("Cannot create {0} with null socket.", typeof(TcpClientCoroutine));
+                throw new ArgumentNullException(error);
+            }
+
             m_CoroutineContainer = container;
             m_Socket = socket;
             m_ReceiveBuffer = new byte[receiveBufferSize];
+            m_CoroutineContainer.StartCoroutine(StartReceivingNextFrame());
         }
 
         /// <summary>
@@ -58,7 +86,7 @@ namespace ADOp.Ludo.Network
         /// </summary>
         /// <param name="pollTreshold">How many zero byte messages to be received to check connection with polling?</param>
         /// <param name="pollWait">How many micro seconds wait for polling connection status?</param>
-        /// <param name="backgroundTreshold">If poll wait time is greater than this, it will poll a background thread. Use cautiously because
+        /// <param name="backgroundTreshold">If poll wait time is greater than this, it will poll in a background thread. Use cautiously because
         /// if you set it too big it may cause lags when remote connection seems to be closed.</param>
         public void SetPollOptions(int pollTreshold, int pollWait = 1000, int backgroundTreshold = 200)
         {
@@ -83,44 +111,27 @@ namespace ADOp.Ludo.Network
             m_BackgroundPollTreshold = Mathf.Clamp(backgroundTreshold, 0, 100000);
         }
 
-        public void Connect(IPAddress address, int port, bool autoStartReceiving = true)
+        /// <summary>
+        /// Connect to the remote end point and start receiving messages.
+        /// </summary>
+        /// <param name="address">Address of remote end point</param>
+        /// <param name="port">Port of remote end point</param>
+        public void Connect(IPAddress address, int port)
         {
-            if(m_CoroutineContainer == null)
+            if (!m_IsConnected && m_Connecting == null)
             {
-                throw new InvalidOperationException("Cannot begin connection without coroutine container.");
-            }
+                if (m_CoroutineContainer == null)
+                {
+                    throw new InvalidOperationException("Cannot begin connection without coroutine container.");
+                }
 
-            if(m_Socket == null)
-            {
-                m_Socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-            }
+                if (m_Socket == null)
+                {
+                    m_Socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                }
 
-            if(m_Connecting != null)
-            {
-                m_Socket.EndConnect(m_ConnectingResult);
-                m_CoroutineContainer.StopCoroutine(m_Connecting);
-            }
-
-            m_ConnectingResult = m_Socket.BeginConnect(address, port, null, null);
-            m_Connecting = m_CoroutineContainer.StartCoroutine(ConnectionWait(autoStartReceiving));
-        }
-
-        public void StartReceiving()
-        {
-            if (m_CoroutineContainer == null)
-            {
-                throw new InvalidOperationException("Cannot start receiving without coroutine container.");
-            }
-
-            if (m_Socket == null)
-            {
-                throw new InvalidOperationException("Cannot start receiving without connection established. Call Connect method first.");
-            }
-
-            if (!m_IsReceiving)
-            {
-                m_IsReceiving = true;
-                m_Receiving = m_CoroutineContainer.StartCoroutine(ReceiveLoop());
+                m_ConnectingResult = m_Socket.BeginConnect(address, port, null, null);
+                m_Connecting = m_CoroutineContainer.StartCoroutine(ConnectionWait());
             }
         }
 
@@ -155,51 +166,80 @@ namespace ADOp.Ludo.Network
 
         public void Close()
         {
-            m_IsReceiving = false;
-            if (m_CoroutineContainer != null)
+            if (m_IsConnected)
             {
-                if(m_Connecting != null)
+                m_IsConnected = false;
+                m_IsReceiving = false;
+                if (m_CoroutineContainer != null)
                 {
-                    m_CoroutineContainer.StopCoroutine(m_Connecting);
-                    m_Connecting = null;
+                    if (m_Connecting != null)
+                    {
+                        m_CoroutineContainer.StopCoroutine(m_Connecting);
+                        m_Connecting = null;
+                    }
+                    if (m_Receiving != null)
+                    {
+                        m_CoroutineContainer.StopCoroutine(m_Receiving);
+                        m_Receiving = null;
+                    }
                 }
-                if (m_Receiving != null)
-                {
-                    m_CoroutineContainer.StopCoroutine(m_Receiving);
-                    m_Receiving = null;
-                }
-            }
 
-            if (m_Socket != null)
-            {
-                m_Socket.Shutdown(SocketShutdown.Both);
-                m_Socket.Close();
-                m_Socket = null;
+                if (m_Socket != null)
+                {
+                    m_Socket.Shutdown(SocketShutdown.Both);
+                    m_Socket.Close();
+                    m_Socket = null;
+                }
+
+                OnDisconnected?.Invoke();
             }
         }
 
-        private IEnumerator ConnectionWait(bool autoStartReceiving)
+        private void CheckContainerInitialization(MonoBehaviour container)
+        {
+            if (container == null)
+            {
+                string error = string.Format("Cannot create {0} with null {1} as coroutine container.", typeof(TcpClientCoroutine)
+                    , typeof(MonoBehaviour));
+                throw new ArgumentNullException(error);
+            }
+        }
+
+        private IEnumerator StartReceivingNextFrame()
+        {
+            yield return null;
+            StartReceiving();
+        }
+
+        private IEnumerator ConnectionWait()
         {
             while (!m_ConnectingResult.IsCompleted)
             {
                 yield return null;
             }
 
-            m_Socket.EndConnect(m_ConnectingResult);
-            m_ConnectingResult = null;
             m_Connecting = null;
-            if (autoStartReceiving)
-            {
-                StartReceiving();
-            }
-
+            IAsyncResult connectingResult = m_ConnectingResult;
+            m_ConnectingResult = null;
+            m_Socket.EndConnect(connectingResult);
+            StartReceiving();
             OnConnected?.Invoke();
+        }
+
+        private void StartReceiving()
+        {
+            if (!m_IsConnected)
+            {
+                m_IsConnected = true;
+                m_IsReceiving = true;
+                m_Receiving = m_CoroutineContainer.StartCoroutine(ReceiveLoop());
+            }
         }
 
         private IEnumerator ReceiveLoop()
         {
             int continuousZeroBytes = 0;
-            while (m_Socket.Connected && m_IsReceiving)
+            while (m_IsConnected && m_Socket.Connected && m_IsReceiving)
             {
                 IAsyncResult result = m_Socket.BeginReceive(m_ReceiveBuffer, 0, m_ReceiveBuffer.Length, SocketFlags.None, null, null);
                 while (!result.IsCompleted)
@@ -224,7 +264,9 @@ namespace ADOp.Ludo.Network
                 }
             }
 
+            //if stopped due to stop receiving by polling result
             m_Receiving = null;
+            Close();
         }
 
         private int CheckConnection(int continuousZeroBytes)
@@ -259,7 +301,12 @@ namespace ADOp.Ludo.Network
                     m_IsPolling = true;
                     Thread pollingThread = new Thread(PollBackground);
                     pollingThread.IsBackground = true;
-                    pollingThread.Start(m_Socket);
+                    PollBackgroundInput pollingInput = new PollBackgroundInput()
+                    {
+                        m_Socket = m_Socket,
+                        m_ContainerName = m_CoroutineContainer.ToString()
+                    };
+                    pollingThread.Start(pollingInput);
                 }
                 catch
                 {
@@ -268,24 +315,25 @@ namespace ADOp.Ludo.Network
             }
             else
             {
-                Poll(m_Socket);
+                Poll(m_Socket, m_CoroutineContainer.ToString());
             }
         }
 
-        private void PollBackground(object socketObject)
+        private void PollBackground(object startData)
         {
-            Socket socket = (Socket)socketObject;
-            Poll(socket);
+            PollBackgroundInput input = (PollBackgroundInput)startData;
+            Poll(input.m_Socket, input.m_ContainerName);
         }
 
-        private void Poll(Socket socket)
+        private void Poll(Socket socket, string containerName)
         {
             bool seemsClosed = socket.Poll(m_PollWait, SelectMode.SelectRead);
             if (seemsClosed && socket.Available == 0)
             {
                 m_IsReceiving = false;
-                string message = string.Format("Stop recieving due to closed, terminated or reseted socket. Local endPoint {0}, remote " +
-                    "endPoint {1}", socket.LocalEndPoint, socket.RemoteEndPoint);
+                string message = string.Format("Stopped tcp client coroutine connection due to closed, terminated or reseted socket (checked " +
+                    "by polling). Coroutine container: {0}, local endPoint: {1}, remote endPoint: {2}", containerName
+                    , socket.LocalEndPoint, socket.RemoteEndPoint);
                 Debug.Log(message);
             }
 

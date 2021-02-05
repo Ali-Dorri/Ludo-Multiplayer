@@ -5,11 +5,14 @@ using System.Net.Sockets;
 using System.Collections.Generic;
 using System;
 using System.Text;
+using UnityEngine.UI;
 
 namespace ADOp.Ludo.Test.Network
 {
     public class TcpListenerCoroutineTest : MonoBehaviour
     {
+        [SerializeField] private Text m_Message;
+
         private TcpListenerCoroutine m_TcpListener;
         private List<TcpClientCoroutine> m_TcpClients = new List<TcpClientCoroutine>(3);
 
@@ -65,10 +68,10 @@ namespace ADOp.Ludo.Test.Network
             if(m_TcpClients.Count < 3)
             {
                 TcpClientCoroutine tcpClient = new TcpClientCoroutine(this, socket);
-                m_TcpClients.Add(tcpClient);
                 int clientIndex = m_TcpClients.Count;
+                m_TcpClients.Add(tcpClient);
+                tcpClient.OnDisconnected += () => DisconnectedClient(clientIndex);
                 tcpClient.OnRecieved += (bytes) => ReceiveClientMessage(bytes, clientIndex);
-                tcpClient.StartReceiving();
             }
         }
 
@@ -76,7 +79,14 @@ namespace ADOp.Ludo.Test.Network
         {
             string message = Encoding.UTF8.GetString(bytes);
             Debug.Log("Message received from client, client index: " + clientIndex + ", message: " + message);
+            m_Message.text = message;
             OnRecivedFromClient?.Invoke(message, clientIndex);
+        }
+
+        private void DisconnectedClient(int clientIndex)
+        {
+            Debug.Log("Accepted client disconnected, client index: " + clientIndex);
+            m_TcpClients.RemoveAt(clientIndex);
         }
     }
 }

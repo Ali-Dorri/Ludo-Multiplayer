@@ -22,8 +22,8 @@ namespace ADOp.Ludo.Test.Network
         [SerializeField] private Button m_CloseButton;
         [SerializeField] private Button m_SendMessageButton;
 
-        private bool m_IsServer = false;
-        private bool m_IsRunning = false;
+        [SerializeField] private bool m_IsServer = false;
+        [SerializeField] private bool m_IsRunning = false;
 
         private void OnEnable()
         {
