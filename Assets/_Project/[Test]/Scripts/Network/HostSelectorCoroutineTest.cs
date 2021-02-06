@@ -89,6 +89,7 @@ namespace ADOp.Ludo.Test.Network
             if (m_IsRunning)
             {
                 string message = string.IsNullOrEmpty(m_MessageText.text) ? "Nothing" : m_MessageText.text;
+
                 if (m_IsServer)
                 {
                     for(int i = 0; i < m_ServerHandler.TcpClients.Count; i++)
